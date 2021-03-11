@@ -32,6 +32,7 @@ rule all:
                 SAMPLE+'_paired.sorted.bam',
                 SAMPLE+'_paired.sorted.bam.complexity.txt'
 
+#check read quality using fastqc - which will output a html which can be viewed for a quick check
 rule fastqc:
         input:
                 read1 = READ_1
@@ -46,7 +47,7 @@ rule fastqc:
                 """
                 fastqc -t 48 {input.read1} {input.read2}| multiqc .
                 """
-
+#If fastqc indicates adapter contamination of reads then you need to trim these
 rule Trim_Adapters:
         input:
                 read1 = READ_1,
@@ -60,7 +61,7 @@ rule Trim_Adapters:
                 trim_galore  --paired {input}
 
                 """
-
+#align reads to the reference genome
 rule Alignment:
         input:
                 read1 = rules.Trim_Adapters.output.read1,
@@ -73,7 +74,7 @@ rule Alignment:
                 """
                 bowtie2 --very-sensitive -X 1000 -x {params.index} --threads 48 -1 {input.read1} -2 {input.read2}| samtools view -@ 48 -bS - > {output}
                 """
-
+#corrdinate sort bam file
 rule coordinate_sort1:
         input:
                 bam = rules.Alignment.output.bam
@@ -83,7 +84,7 @@ rule coordinate_sort1:
                 """
                 samtools sort -@ 48 -o {output.bam} {input.bam}
                 """
-
+#index bam file
 rule index1:
         input:
                 bam = rules.coordinate_sort1.output.bam
@@ -93,6 +94,7 @@ rule index1:
                 """
                 samtools index -@ 48 {input.bam}
                 """
+#remove the mitochondrial chromosome - this is common practice for ATAC-seq analysis as the M chromosome is free of nucleosomes so there will be a concentration of reads here
 rule remove_chrM:
         input:
                 bam = rules.coordinate_sort1.output.bam,
@@ -104,7 +106,7 @@ rule remove_chrM:
                 """
                 samtools view -@ 48 -h -f 3 {input.bam}| python /home/darragh/ATAC-Seq/Python_scripts/removeChrom.py  - - chrM | samtools view -@ 48 -bh - > {output}
                 """
-
+#coordinate sort and index the bam file
 rule coordinate_sort_index2:
         input:
                 bam = rules.remove_chrM.output.bam
@@ -116,6 +118,7 @@ rule coordinate_sort_index2:
                 samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index -@ 48 {output.bam}
                 """
 
+#only keep paired reads in the bam file
 rule paired_reads_only:
         input:
                 bam = rules.coordinate_sort_index2.output.bam
@@ -126,6 +129,7 @@ rule paired_reads_only:
                 samtools view -@ 48 -bh -f 3 {input.bam} > {output.bam}
 
                 """
+#coordinate sort bam file
 rule Coordinate_sort3:
         input:
                 bam = rules.paired_reads_only.output.bam
@@ -135,7 +139,7 @@ rule Coordinate_sort3:
                 """
                 samtools sort -@ 48 -n -o {output.bam} {input.bam}; samtools index {output.bam}
                 """
-
+#index the bam file
 rule index3:
         input:
                 bam = rules.Coordinate_sort3.output.bam
@@ -146,7 +150,7 @@ rule index3:
                 samtools index  {input.bam}
                 """
 
-
+#file in size coordinates
 rule samtools_fixmate:
         input:
                 bam = rules.Coordinate_sort3.output.bam,
@@ -157,7 +161,7 @@ rule samtools_fixmate:
                 """
                 samtools fixmate -m {input.bam} {output.bam}
                 """
-
+#coordinate sort and index bam file
 rule Coordinate_sort_index4:
         input:
                 bam = rules.samtools_fixmate.output.bam
@@ -168,7 +172,7 @@ rule Coordinate_sort_index4:
                 """
                 samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index {output.bam}
                 """
-
+#remove duplicate reads from the bam file
 rule remove_duplicates:
         input:
                 bam = rules.Coordinate_sort_index4.bam
@@ -178,7 +182,7 @@ rule remove_duplicates:
                 """
                 samtools markdup -@ 48 -r -s {input.bam} {output.bam}
                 """
-                
+#coordinate sort and index the bam file               
 rule Coordinate_sort_index5:
         input:
                 bam = rules.remove_duplicates.output.bam
@@ -189,7 +193,7 @@ rule Coordinate_sort_index5:
                 """
                 samtools sort -@ 48 -n {output.bam} {input.bam}; samtools index {output.bam}
                 """
-
+#convert the bam file back into fastqs
 rule convert_bam_fastq:
         input:
                 bam = rules.Coordinate_sort_index5.bam
@@ -200,7 +204,7 @@ rule convert_bam_fastq:
                 """
                 bedtools bamtofastq -i {input.bam} -fq {output.read1} -fq2 {output.read2}
                 """
-      
+#run fastqc analysis again after performing all of the quality checks     
 rule fastqc_2:
         input:
                 read1 = rules.convert_bam_fastq.output.read1
@@ -221,33 +225,33 @@ rule fastqc_2:
                
 
         
-rule chrom_length_info:
-        input:
-                bam = rules.paired_reads_only.output.bam
-        output:
-                chrom = SAMPLE+'_auto.x.chrom.human.txt'
-        shell:
-                """
-                samtools view -@ 48 -H {input.bam} | grep -P 'SN:' | cut -f2,3  | perl -p -e 's/[SL]N://g' | awk 'BEGIN{FS=OFS="\t"} {print $1, 1, $2, "hg38"}' > {output.chroms}
-                """
-rule ATACseqQC:
-        input:
-                script = ATACQC,
-                bam = rules.Coordinate_sort_index3.output.bam,
-                chroms = rules.chrom_length_info.output.chrom
-        output:
-                libcomplex_plot = SAMPLE+'_paired.sorted.bam.library.complexity.pdf',
-                libcomplex_table = SAMPLE+'_paired.sorted.bam.complexity.txt',
-                fragsize_plot = SAMPLE+'_paired.sorted.fragment.size.distribution.pdf',
-                heatmap_plot = SAMPLE+'_paired.sorted.heatmap and averaged coverage.pdf',
-                cumulatpercent_plot = SAMPLE+'_paired.sorted.Cumulative_Percentage.pdf',
-                feature_align_dist_plot = SAMPLE+'__paired.sorted.Feature_Aligned_Distribution.pdf'
+#rule chrom_length_info:
+#        input:
+#                bam = rules.paired_reads_only.output.bam
+#        output:
+#                chrom = SAMPLE+'_auto.x.chrom.human.txt'
+#        shell:
+#                """
+#                samtools view -@ 48 -H {input.bam} | grep -P 'SN:' | cut -f2,3  | perl -p -e 's/[SL]N://g' | awk 'BEGIN{FS=OFS="\t"} {print $1, 1, $2, "hg38"}' > {output.chroms}
+#                """
+#rule ATACseqQC:
+#        input:
+#                script = ATACQC,
+#                bam = rules.Coordinate_sort_index3.output.bam,
+#                chroms = rules.chrom_length_info.output.chrom
+#        output:
+#                libcomplex_plot = SAMPLE+'_paired.sorted.bam.library.complexity.pdf',
+#                libcomplex_table = SAMPLE+'_paired.sorted.bam.complexity.txt',
+#                fragsize_plot = SAMPLE+'_paired.sorted.fragment.size.distribution.pdf',
+#                heatmap_plot = SAMPLE+'_paired.sorted.heatmap and averaged coverage.pdf',
+#                cumulatpercent_plot = SAMPLE+'_paired.sorted.Cumulative_Percentage.pdf',
+#                feature_align_dist_plot = SAMPLE+'__paired.sorted.Feature_Aligned_Distribution.pdf'#
 
-        shell:
-                """
-                Rscript {input.script} {input.bam} {input.chroms}
+#        shell:
+#                """
+#                Rscript {input.script} {input.bam} {input.chroms}#
 
-                """
+#                """
 
 
               
