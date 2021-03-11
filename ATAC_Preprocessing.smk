@@ -20,7 +20,7 @@ SAMPLE = config['Sample']
 ATACQC = config['ATACseqQC_script']
 
 directory_function = functools.partial(os.path.join, config['results'])
-FASTQC2_DIR = prefix_results('fastqc_2')
+FASTQC2_DIR = directory_function('fastqc_2')
 
 
 ###############################################################################################
