@@ -3,6 +3,8 @@
 ###############################################################################################
 import os
 
+import functools
+
 configfile: 'config.yaml'
 
 READ_1 = config['read_1']
@@ -16,6 +18,9 @@ GENOME = config['genome']
 SAMPLE = config['Sample']
 
 ATACQC = config['ATACseqQC_script']
+
+directory_function = functools.partial(os.path.join, config['results'])
+FASTQC2_DIR = prefix_results('fastqc_2')
 
 ###############################################################################################
 ###Functions
@@ -31,6 +36,20 @@ rule all:
                 SAMPLE+'_paired.sorted.bam',
                 SAMPLE+'_paired.sorted.bam.complexity.txt'
 
+rule fastqc:
+        input:
+                read1 = READ_1
+                read2 = READ_2
+        output:
+                os.path.basename(READ_1).rstrip(".fq.gz")+"_fastqc.html",
+                os.path.basename(READ_2).rstrip(".fq.gz")+"_fastqc.html",
+                os.path.basename(READ_1).rstrip(".fq.gz")+"_fastqc.zip",
+                os.path.basename(READ_2).rstrip(".fq.gz")+"_fastqc.zip"
+               
+        shell:
+                """
+                fastqc -t 48 {input.read1} {input.read2}| multiqc .
+                """
 
 rule Trim_Adapters:
         input:
@@ -111,22 +130,33 @@ rule paired_reads_only:
                 samtools view -@ 48 -bh -f 3 {input.bam} > {output.bam}
 
                 """
-rule Coordinate_sort_index3:
+rule Coordinate_sort3:
         input:
                 bam = rules.paired_reads_only.output.bam
         output:
-                bam = SAMPLE+'_paired.sorted.bam',
+                bam = SAMPLE+'_paired.sorted.bam'
+        shell:
+                """
+                samtools sort -@ 48 -n -o {output.bam} {input.bam}; samtools index {output.bam}
+                """
+
+rule index3:
+        input:
+                bam = rules.Coordinate_sort3.output.bam
+        output:
                 index = SAMPLE+'_paired.sorted.bam.bai'
         shell:
                 """
-                samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index {output.bam}
+                samtools index  {input.bam}
                 """
+
 
 rule samtools_fixmate:
         input:
-                bam = rules.Coordinate_sort_index3.ouput.bam
+                bam = rules.Coordinate_sort3.output.bam,
+                index = rules.index3.output.index
         output:
-                bam = SAMPLE+'_fixmate.bam'
+                bam = temp(SAMPLE+'_fixmate.bam')
         shell:
                 """
                 samtools fixmate -m {input.bam} {output.bam}
@@ -134,10 +164,67 @@ rule samtools_fixmate:
 
 rule Coordinate_sort_index4:
         input:
+                bam = rules.samtools_fixmate.output.bam
+        output:
+                bam = temp(SAMPLE+'_fixmate.sorted.bam'),
+                index = temp(SAMPLE+'_fixmate.sorted.bam.bai)
+        shell:
+                """
+                samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index {output.bam}
+                """
+
+rule remove_duplicates:
+        input:
                 bam = rules.Coordinate_sort_index4.bam
         output:
-                bam = SAMPLE+'_fixmate.sorted.bam'
+                bam = temp(SAMPLE+'_nodups.bam')
+        shell:
+                """
+                samtools markdup -@ 48 -r -s {input.bam} {output.bam}
+                """
+                
+rule Coordinate_sort_index5:
+        input:
+                bam = rules.remove_duplicates.output.bam
+        output:
+                bam = SAMPLE+'_nodups.sorted.bam',
+                index = SAMPLE+'_nodups.sorted.bam.bai
+        shell:
+                """
+                samtools sort -@ 48 -n {output.bam} {input.bam}; samtools index {output.bam}
+                """
 
+rule convert_bam_fastq:
+        input:
+                bam = rules.Coordinate_sort_index5.bam
+        output:
+                read1 = SAMPLE+'_processed_read_1.fq
+                read2 = SAMPLE+'_processed_read_2.fq
+        shell:
+                """
+                bedtools bamtofastq -i {input.bam} -fq {output.read1} -fq2 {output.read2}
+                """
+      
+rule fastqc_2:
+        input:
+                read1 = rules.convert_bam_fastq.output.read1
+                read2 = rules.convert_bam_fastq.output.read2
+        output:
+                os.path.join(FASTQC2_DIR, os.path.basename(READ_1).rstrip(".fq.gz")+"_fastqc.html"),
+                os.path.join(FASTQC2_DIR, os.path.basename(READ_2).rstrip(".fq.gz")+"_fastqc.html"),
+                os.path.join(FASTQC2_DIR, os.path.basename(READ_1).rstrip(".fq.gz")+"_fastqc.zip"),
+                os.path.join(FASTQC2_DIR, os.path.basename(READ_2).rstrip(".fq.gz")+"_fastqc.zip")
+            
+        params:
+                outdir=FASTQC2_DIR
+               
+        shell:
+                """
+                fastqc -t 48 -o {params.outdir} {input.read1} {input.read2}
+                """
+               
+
+        
 rule chrom_length_info:
         input:
                 bam = rules.paired_reads_only.output.bam
