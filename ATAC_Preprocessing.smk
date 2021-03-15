@@ -2,6 +2,7 @@
 ##Darragh Nimmo
 ## March 2021
 #snakemake workflow for ATAC-seq preprocessing.
+#includes the use of scripts from Reske et al 2020 and ATACseqQC R package.
 ####################################################
 
 
@@ -27,7 +28,7 @@ GENOME2 = config['genome2']
 
 SAMPLE = config['Sample']
 
-ATACQC = config['ATACseqQC_script']
+ATAC_script = config['ATACseqQC_script']
 
 CONDA_ENV_DIR = config['conda_env_dir']
 
@@ -43,47 +44,48 @@ ATACseqQC_DIR = directory_function('ATACseqQC')
 
 rule all:
         input:
-                SAMPLE+'_paired.sorted.bam',
-                SAMPLE+'_paired.sorted.bam.complexity.txt'
-
+                os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bam')
 rule fastqc:
-        input:
-                read1 = READ_1
-                read2 = READ_2
-        output:
-                os.path.join(FASTQC_DIR, os.path.basename(READ_1).rstrip(".fq.gz")+"_fastqc.html"),
-                os.path.join(FASTQC_DIR, os.path.basename(READ_2).rstrip(".fq.gz")+"_fastqc.html"),
-                os.path.join(FASTQC_DIR, os.path.basename(READ_1).rstrip(".fq.gz")+"_fastqc.zip"),
-                os.path.join(FASTQC_DIR, os.path.basename(READ_2).rstrip(".fq.gz")+"_fastqc.zip"),
-                os.path.join(FASTQC_DIR,'multiqc_data')
-                os.path.join(FASTQC_DIR, 'multiqc_report.html')
-        threads: THREADS
-        conda:
-            os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
-        message:
-            "Examining quality of sequencing reads using fastqc and multiqc."   
-        shell:
-                """
-                fastqc -t 48 {input.read1} {input.read2}| multiqc -o FASTQC_DIR  .
-                """
-                
+    input:
+        read1 = READ_1,
+        read2 = READ_2
+    output:
+        os.path.join(FASTQC_DIR, os.path.basename(READ_1).rstrip(".fq.gz")+"_fastqc.html"),
+        os.path.join(FASTQC_DIR, os.path.basename(READ_2).rstrip(".fq.gz")+"_fastqc.html"),
+        os.path.join(FASTQC_DIR, os.path.basename(READ_1).rstrip(".fq.gz")+"_fastqc.zip"),
+        os.path.join(FASTQC_DIR, os.path.basename(READ_2).rstrip(".fq.gz")+"_fastqc.zip"),
+    threads: THREADS
+    params:
+        dir = FASTQC_DIR
+    conda:
+        os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
+    message:
+        "Examining quality of sequencing reads using fastqc."
+    shell:
+        """
+        fastqc -t 48 {input.read1} {input.read2} -o {params.dir}
+        """
+
 rule trim_adapters:
-        input:
-                read1 = READ_1,
-                read2 = READ_2
-        output:
-                read1 = os.path.join(READS_DIR, os.path.basename(READ_1).rstrip(".fq.gz")+"_val_1.fq.gz"),
-                read2 = os.path.join(READS_DIR, os.path.basename(READ_2).rstrip(".fq.gz")+"_val_2.fq.gz")
-        threads: THREADS
-        conda:
-            os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
-        message:
-            "Trimming reads from the sequencing reads using trim galore."
-        shell:
-                """
-                trim_galore  --paired {input}
-                """
-                
+    input:
+        read1 = READ_1,
+        read2 = READ_2
+    output:
+        read1 = os.path.join(READS_DIR, os.path.basename(READ_1).rstrip(".fq.gz")+"_val_1.fq.gz"),
+        read2 = os.path.join(READS_DIR, os.path.basename(READ_2).rstrip(".fq.gz")+"_val_2.fq.gz")
+    threads: THREADS
+    params:
+        dir = READS_DIR
+conda:
+        os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
+    message:
+        "Trimming reads from the sequencing reads using trim galore."
+    shell:
+        """
+        trim_galore --paired {input} -o {params.dir}
+        """
+
+
 rule alignment:
         input:
                 read1 = rules.trim_adapters.output.read1,
@@ -102,7 +104,7 @@ rule alignment:
                 bowtie2 --very-sensitive -X 1000 -x {params.index} --threads 48
                 -1 {input.read1} -2 {input.read2}| samtools view -@ 48 -bS - > {output}
                 """
-                
+
 rule coordinate_sort_index_1:
         input:
                 bam = rules.alignment.output.bam
@@ -111,15 +113,14 @@ rule coordinate_sort_index_1:
                 index = temp(os.path.join(BAM_DIR, SAMPLE+'_mapped.sorted.bam.bai'))
         threads: THREADS
         conda:
-            os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')   
-        message:
+            os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
+  message:
             "Coordinate sorting and indexing alignment bam."
         shell:
                 """
-                samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index1
-                -@ 48 {output.bam}
+                samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index -@ 48 {output.bam}
                 """
-                
+
 rule remove_chrM:
         input:
                 bam = rules.coordinate_sort_index_1.output.bam,
@@ -133,9 +134,7 @@ rule remove_chrM:
             "Removing mitochondrial alignments from the bam file."
         shell:
                 """
-                samtools view -@ 48 -h -f 3 {input.bam}| python
-                 /home/darragh/ATAC-Seq/Python_scripts/removeChrom.py  - - chrM
-                  | samtools view -@ 48 -bh - > {output}
+                /home/darragh/Scripts/ATAC/remove_chrM.sh {input.bam}
                 """
 
 rule coordinate_sort_index2:
@@ -186,32 +185,35 @@ rule coordinate_sort_index3:
                 samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index {output.bam}
                 """
 
-rule ATACseqQC_quality_checks:
-    input:
-        bam = rules.coordinate_sort_index3.output.bam
-    output:
-        Lib_complex_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_library_complexity.pdf'),
-        Lib_complexity_table = os.path.join(ATACseqQC_DIR, SAMPLE+'_library_complexity.txt'),
-        Frag_size_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_fragment_size_distribution.pdf'),
-        TSS_enrichment_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_transcription_start_site.pdf'),
-        Heat_map_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_heat_map.pdf'),
-        Feat_align_dist_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_heat_map.pdf')
-    threads: THREADS
-    conda:
-        os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
-    message:
-        "Creating Plots to assess the quality of the ATAC-seq data with ATACseqQC"
-    shell:
-        """
-        Rscript ATACQC {input.bam}
-        """
+#rule ATACseqQC_quality_checks:
+#    input:
+#        bam = rules.coordinate_sort_index3.output.bam
+#    output:
+#        Lib_complex_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_library_complexity.pdf'),
+#        Lib_complexity_table = os.path.join(ATACseqQC_DIR, SAMPLE+'_library_complexity.txt'),
+#        Frag_size_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_fragment_size_distribution.pdf'),
+#        TSS_enrichment_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_transcription_start_site.pdf'),
+#        Heat_map_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_heat_map.pdf'),
+#        Feat_align_dist_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_feature_aligned_distribution.pdf')
+#    threads: THREADS
+#    params:
+#        script = ATAC_script
+#    conda:
+#        os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
+#    message:
+#        "Creating Plots to assess the quality of the ATAC-seq data with ATACseqQC"
+#
+#    shell:
+#        """
+#        Rscript {params.script} {input.bam}
+#        """
 
 rule subsample_by_lib_complexity:
         input:
                 bam = rules.coordinate_sort_index3.output.bam,
                 index = rules.coordinate_sort_index3.output.index,
         output:
-                bam = temp(SAMPLE+'_subsampled.bam')
+                bam = temp(os.path.join(BAM_DIR, SAMPLE+'_subsampled.bam'))
         threads: THREADS
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
@@ -221,13 +223,12 @@ rule subsample_by_lib_complexity:
                 """
                 samtools view -@ 48 -h -b -s 1.33 {input.bam} > {output.bam}
                 """
-
 rule coordinate_sort_index4:
         input:
                 bam = rules.subsample_by_lib_complexity.output.bam
         output:
-                bam = temp(SAMPLE+'_subsampled.sorted.bam'),
-                index = temp(SAMPLE+'_subsampled.sorted.bam.bai')
+                bam = temp(os.path.join(BAM_DIR, SAMPLE+'_subsampled.sorted.bam')),
+                index = temp(os.path.join(BAM_DIR, SAMPLE+'_subsampled.sorted.bam.bai'))
         threads: THREADS
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
@@ -237,13 +238,13 @@ rule coordinate_sort_index4:
                 """
                 samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index {output.bam}
                 """
-                
-rule mark_duplicates:
+
+rule Mark_Duplicates:
     input:
         bam=rules.coordinate_sort_index4.output.bam
     output:
-        bam= temp(SAMPLE+'_markedDuplicates.bam'),
-        metrics= temp(SAMPLE+"_markedDuplicates.txt")
+        bam= temp(os.path.join(BAM_DIR, SAMPLE+'_markedDuplicates.bam')),
+        metrics= temp(os.path.join(BAM_DIR, SAMPLE+"_markedDuplicates.txt"))
     threads: THREADS
     conda:
         os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
@@ -251,16 +252,15 @@ rule mark_duplicates:
         "Removing duplicates from the bam file."
     shell:
         """
-        "java -jar /home/darragh/picard.jar MarkDuplicates -I {input.bam} 
-        -O {output.bam} -M {output.metrics} --REMOVE_DUPLICATES true
+        java -jar /home/darragh/picard.jar MarkDuplicates -I {input.bam} -O {output.bam} -M {output.metrics} --REMOVE_DUPLICATES true
         """
-        
+
 rule coordinate_sort_index5:
         input:
-                bam = rules.mark_duplicates.output.bam
+                bam = rules.Mark_Duplicates.output.bam
         output:
-                bam = protected(SAMPLE+'_md.sorted.bam'),
-                index = protected(SAMPLE+'_md.sorted.bam.bai')
+                bam = protected(os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bam')),
+                index = protected(os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bam.bai'))
         threads: THREADS
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
@@ -270,3 +270,4 @@ rule coordinate_sort_index5:
                 """
                 samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index {output.bam}
                 """
+
