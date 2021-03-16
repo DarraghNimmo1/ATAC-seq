@@ -28,6 +28,8 @@ GENOME2 = config['genome2']
 
 SAMPLE = config['Sample']
 
+BLACK_LIST = config['black_list'] 
+
 ATAC_script = config['ATACseqQC_script']
 
 CONDA_ENV_DIR = config['conda_env_dir']
@@ -272,26 +274,29 @@ rule coordinate_sort_index5:
                 samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index {output.bam}
                 """
 		
-rule convert_bam_to_bed:
-	input:
-		bam = rules.coordinate_sort_index5.output.bam
-	output:
-		bed = temp(os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bam'))
-	threads: THREADS
-        conda:
-            os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
-        message:
-            "Converting bam file to a bed file."
-	shell:
-		"""
-		bamToBed -i {input.bam} > {output.bed}
-		"""
-                   
+rule bam_to_bed_and_Tn5_shift:
+    input:
+        bam = rules.coordinate_sort_index5.output.bam
+    output:
+        bed = temp(os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bed'))
+    threads: THREADS
+    conda:
+        os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
+    message:
+        "Converting bam file to a bed file."
+    shell:
+        """
+        bamToBed -i {input.bam} > {output.bed}
+        """
+
 rule peak_calling:
     input:
         bed = rules.convert_bam_to_bed.output.bed
     output:
         BroadPeak = protected(os.path.join(PEAK_DIR, SAMPLE+'_peaks.broadPeak'))
+    params:
+        dir = PEAK_DIR,
+        sample = SAMPLE
     threads: THREADS
     conda:
         os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
@@ -299,7 +304,22 @@ rule peak_calling:
         "Peak calling."
     shell:
         """
-        macs2 callpeak -t {input.bam} -f BED --name SAMPLE -g hs --nomodel --shift -100
-         --extsize 200 --broad
+        macs2 callpeak -t {input.bed} --nomodel --shift -100 --extsize 200 --broad -f BED --name {params.sample} -g hs --outdir {params.dir}
         """
 
+rule preprocess_peaks:
+	input:
+		BroadPeak = rules.peak_calling.output.BroadPeak,
+	output:
+		bed = protected(os.path.join(PEAK_DIR, SAMPLE+'_processed_peaks.bed'))
+	params:
+		BlackList = BLACK_LIST
+	threads: THREADS
+	conda:
+		os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
+	message:
+		"Preprocessing peaks."
+	shell:
+		"""
+		bedtools subtract -a {input.BroadPeak} -b {params.BlackList} > {output.bed}
+		"""
