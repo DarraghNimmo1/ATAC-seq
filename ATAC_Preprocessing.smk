@@ -1,7 +1,8 @@
 ####################################################
-##Darragh Nimmo
+## Darragh Nimmo
+## Trinity College Dublin
 ## March 2021
-#snakemake workflow for ATAC-seq preprocessing and peak calling.
+# Snakemake workflow for ATAC-seq preprocessing and peak calling.
 ####################################################
 
 
@@ -298,7 +299,7 @@ rule peak_calling:
         "Peak calling."
     shell:
         """
-        macs2 callpeak -t {input.bam} --name SAMPLE -g hs --nomodel --shift -100
+        macs2 callpeak -t {input.bam} -f BED --name SAMPLE -g hs --nomodel --shift -100
          --extsize 200 --broad
         """
 
