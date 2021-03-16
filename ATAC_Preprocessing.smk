@@ -239,7 +239,7 @@ rule coordinate_sort_index4:
                 samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index {output.bam}
                 """
 
-rule Mark_Duplicates:
+rule mark_duplicates:
     input:
         bam=rules.coordinate_sort_index4.output.bam
     output:
