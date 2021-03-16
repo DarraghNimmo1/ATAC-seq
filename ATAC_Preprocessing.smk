@@ -2,7 +2,6 @@
 ##Darragh Nimmo
 ## March 2021
 #snakemake workflow for ATAC-seq preprocessing.
-#includes the use of scripts from Reske et al 2020 and ATACseqQC R package.
 ####################################################
 
 
