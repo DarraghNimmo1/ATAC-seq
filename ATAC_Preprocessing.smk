@@ -1,7 +1,7 @@
 ####################################################
 ##Darragh Nimmo
 ## March 2021
-#snakemake workflow for ATAC-seq preprocessing.
+#snakemake workflow for ATAC-seq preprocessing and peak calling.
 ####################################################
 
 
@@ -36,6 +36,7 @@ FASTQC_DIR = directory_function('Fastqc')
 BAM_DIR = directory_function('Bam')
 READS_DIR = directory_function('READS')
 ATACseqQC_DIR = directory_function('ATACseqQC')
+PEAK_DIR = directory_function('Peak')
 
 ###############################################################################################
 ###Rules
@@ -269,4 +270,38 @@ rule coordinate_sort_index5:
                 """
                 samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index {output.bam}
                 """
-
+                   
+rule peak_calling:
+    input:
+        bam = rules.coordinate_sort_index5.output.bam
+    output:
+        BroadPeak = protected(os.path.join(PEAK_DIR, SAMPLE+'_peaks.broadPeak')),
+        raw = protected(os.path.join(PEAK_DIR, SAMPLE+'_raw.bed'))
+    threads: THREADS
+    conda:
+        os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
+    message:
+        "Peak calling."
+    shell:
+        """
+        macs2 callpeak -t {input.bam} --name SAMPLE -g hs --nomodel --shift -100
+         --extsize 200 --broad; cp {output.BroadPeak} {output.raw}
+        """
+rule process_peaks:
+	input: 
+		peaks = rules.peak_calling.output.raw,
+		blacklist = BLACK_LIST,
+		whitelist = rules.get_fasta_chroms.output.bed
+	output: 
+		peaks = protected(os.path.join(PEAK_DIR, SAMPLE+'_peaks_processed.bed'))
+    threads: THREADS 
+    conda:
+        os.path.join(CONDA_ENV_DIR, 'ATACseq_peak_calling_env.yaml')
+    message:
+        "Processing peaks"
+	shell:
+        """
+		cat {input.peaks} | cut -f1-3 | sort -k1,1 -k2,2n | bedtools subtract
+        -a - -b {input.blacklist} -A | bedtools intersect -a - -b
+        {input.whitelist} -wa | awk '$1 !~ /[M]/' | awk '{print $0}' > {output.peaks}	
+        """
