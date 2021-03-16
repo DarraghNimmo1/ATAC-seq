@@ -270,13 +270,27 @@ rule coordinate_sort_index5:
                 """
                 samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index {output.bam}
                 """
+		
+rule convert_bam_to_bed:
+	input:
+		bam = rules.coordinate_sort_index5.output.bam
+	output:
+		bed = temp(os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bam'))
+	threads: THREADS
+        conda:
+            os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
+        message:
+            "Converting bam file to a bed file."
+	shell:
+		"""
+		bamToBed -i {input.bam} > {output.bed}
+		"""
                    
 rule peak_calling:
     input:
-        bam = rules.coordinate_sort_index5.output.bam
+        bed = rules.convert_bam_to_bed.output.bed
     output:
-        BroadPeak = protected(os.path.join(PEAK_DIR, SAMPLE+'_peaks.broadPeak')),
-        raw = protected(os.path.join(PEAK_DIR, SAMPLE+'_raw.bed'))
+        BroadPeak = protected(os.path.join(PEAK_DIR, SAMPLE+'_peaks.broadPeak'))
     threads: THREADS
     conda:
         os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
@@ -285,23 +299,6 @@ rule peak_calling:
     shell:
         """
         macs2 callpeak -t {input.bam} --name SAMPLE -g hs --nomodel --shift -100
-         --extsize 200 --broad; cp {output.BroadPeak} {output.raw}
+         --extsize 200 --broad
         """
-rule process_peaks:
-	input: 
-		peaks = rules.peak_calling.output.raw,
-		blacklist = BLACK_LIST,
-		whitelist = rules.get_fasta_chroms.output.bed
-	output: 
-		peaks = protected(os.path.join(PEAK_DIR, SAMPLE+'_peaks_processed.bed'))
-    threads: THREADS 
-    conda:
-        os.path.join(CONDA_ENV_DIR, 'ATACseq_peak_calling_env.yaml')
-    message:
-        "Processing peaks"
-	shell:
-        """
-		cat {input.peaks} | cut -f1-3 | sort -k1,1 -k2,2n | bedtools subtract
-        -a - -b {input.blacklist} -A | bedtools intersect -a - -b
-        {input.whitelist} -wa | awk '$1 !~ /[M]/' | awk '{print $0}' > {output.peaks}	
-        """
+
