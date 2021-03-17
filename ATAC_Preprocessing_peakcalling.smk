@@ -20,17 +20,21 @@ READ_1 = config['read_1']
 
 READ_2 = config['read_2']
 
-THREADS = config['threads']
-
 GENOME = config['genome']
-
-GENOME2 = config['genome2']
 
 SAMPLE = config['Sample']
 
+SUBSAMPLE = config['subsample']
+
 BLACK_LIST = config['black_list'] 
 
+PICARD_JAR = config['picard_jar']
+
 ATAC_script = config['ATACseqQC_script']
+
+chrM_SCRIPT = config['chrM_script']
+
+bedpe_SCRIPT = config['bedpe_script']
 
 CONDA_ENV_DIR = config['conda_env_dir']
 
@@ -47,7 +51,7 @@ PEAK_DIR = directory_function('Peak')
 
 rule all:
         input:
-                os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bam')
+                os.path.join(PEAK_DIR, SAMPLE+'_processed_peaks.bed')
 rule fastqc:
     input:
         read1 = READ_1,
@@ -57,7 +61,6 @@ rule fastqc:
         os.path.join(FASTQC_DIR, os.path.basename(READ_2).rstrip(".fq.gz")+"_fastqc.html"),
         os.path.join(FASTQC_DIR, os.path.basename(READ_1).rstrip(".fq.gz")+"_fastqc.zip"),
         os.path.join(FASTQC_DIR, os.path.basename(READ_2).rstrip(".fq.gz")+"_fastqc.zip"),
-    threads: THREADS
     params:
         dir = FASTQC_DIR
     conda:
@@ -76,7 +79,6 @@ rule trim_adapters:
     output:
         read1 = os.path.join(READS_DIR, os.path.basename(READ_1).rstrip(".fq.gz")+"_val_1.fq.gz"),
         read2 = os.path.join(READS_DIR, os.path.basename(READ_2).rstrip(".fq.gz")+"_val_2.fq.gz")
-    threads: THREADS
     params:
         dir = READS_DIR
 conda:
@@ -97,7 +99,6 @@ rule alignment:
                 index = GENOME
         output:
                 bam = protected(os.path.join(BAM_DIR, SAMPLE+'_mapped.bam'))
-        threads: THREADS
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
         message:
@@ -114,7 +115,6 @@ rule coordinate_sort_index_1:
         output:
                 bam = temp(os.path.join(BAM_DIR, SAMPLE+'_mapped.sorted.bam')),
                 index = temp(os.path.join(BAM_DIR, SAMPLE+'_mapped.sorted.bam.bai'))
-        threads: THREADS
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
   message:
@@ -130,14 +130,15 @@ rule remove_chrM:
                 index = rules.coordinate_sort_index_1.output.index
         output:
                 bam = temp(os.path.join(BAM_DIR,SAMPLE+'_noMT.bam'))
-        threads: THREADS
+	params:
+		script = chrM_SCRIPT
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
         message:
             "Removing mitochondrial alignments from the bam file."
         shell:
                 """
-                /home/darragh/Scripts/ATAC/remove_chrM.sh {input.bam}
+                bash {params.script} {input.bam} {output.bam}
                 """
 
 rule coordinate_sort_index2:
@@ -146,7 +147,6 @@ rule coordinate_sort_index2:
         output:
                 bam = temp(os.path.join(BAM_DIR, SAMPLE+'_noMT.sorted.bam')),
                 index = temp(os.path.join(BAM_DIR, SAMPLE+'_noMT.sorted.bam.bai'))
-        threads: THREADS
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
         message:
@@ -162,7 +162,6 @@ rule paired_reads_only:
                 bam = rules.coordinate_sort_index2.output.bam
         output:
                 bam = temp(os.path.join(BAM_DIR, SAMPLE+'_paired.bam'))
-        threads: THREADS
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
         message:
@@ -178,7 +177,6 @@ rule coordinate_sort_index3:
         output:
                 bam = protected(os.path.join(BAM_DIR, SAMPLE+'_paired.sorted.bam')),
                 index = protected(os.path.join(BAM_DIR, SAMPLE+'_paired.sorted.bam.bai'))
-        threads: THREADS
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
         message:
@@ -198,7 +196,6 @@ rule coordinate_sort_index3:
 #        TSS_enrichment_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_transcription_start_site.pdf'),
 #        Heat_map_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_heat_map.pdf'),
 #        Feat_align_dist_plot = os.path.join(ATACseqQC_DIR, SAMPLE+'_feature_aligned_distribution.pdf')
-#    threads: THREADS
 #    params:
 #        script = ATAC_script
 #    conda:
@@ -217,14 +214,15 @@ rule subsample_by_lib_complexity:
                 index = rules.coordinate_sort_index3.output.index,
         output:
                 bam = temp(os.path.join(BAM_DIR, SAMPLE+'_subsampled.bam'))
-        threads: THREADS
+	params:
+		sub = SUBSAMPLE
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
         message:
             "Subsampling the bam file according to the level of library complexity"
         shell:
                 """
-                samtools view -@ 48 -h -b -s 1.33 {input.bam} > {output.bam}
+                samtools view -@ 48 -h -b -s {params.sub} {input.bam} > {output.bam}
                 """
 rule coordinate_sort_index4:
         input:
@@ -232,7 +230,6 @@ rule coordinate_sort_index4:
         output:
                 bam = temp(os.path.join(BAM_DIR, SAMPLE+'_subsampled.sorted.bam')),
                 index = temp(os.path.join(BAM_DIR, SAMPLE+'_subsampled.sorted.bam.bai'))
-        threads: THREADS
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
         message:
@@ -248,56 +245,70 @@ rule mark_duplicates:
     output:
         bam= temp(os.path.join(BAM_DIR, SAMPLE+'_markedDuplicates.bam')),
         metrics= temp(os.path.join(BAM_DIR, SAMPLE+"_markedDuplicates.txt"))
-    threads: THREADS
+    params:
+	picard = PICARD_JAR
     conda:
         os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
     message:
         "Removing duplicates from the bam file."
     shell:
         """
-        java -jar /home/darragh/picard.jar MarkDuplicates -I {input.bam} -O {output.bam} -M {output.metrics} --REMOVE_DUPLICATES true
+        java -jar {params.picard} MarkDuplicates -I {input.bam} -O {output.bam} -M {output.metrics} --REMOVE_DUPLICATES true
         """
 
-rule coordinate_sort_index5:
+rule coordinate_sort_5:
         input:
                 bam = rules.Mark_Duplicates.output.bam
         output:
-                bam = protected(os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bam')),
-                index = protected(os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bam.bai'))
-        threads: THREADS
+                bam = protected(os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bam'))
         conda:
             os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
         message:
-            "Coordinate sorting and indexing the final bam file."
+            "Coordinate sorting bam file by read name."
         shell:
                 """
-                samtools sort -@ 48 -o {output.bam} {input.bam}; samtools index {output.bam}
+                samtools sort -@ 48 -n -o {output.bam} {input.bam}
                 """
 		
 rule bam_to_bed_and_Tn5_shift:
     input:
-        bam = rules.coordinate_sort_index5.output.bam
+        bam = rules.coordinate_sort_5.output.bam
     output:
-        bed = temp(os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bed'))
-    threads: THREADS
+        bedpe = temp(os.path.join(BAM_DIR, SAMPLE+'_md.sorted.bedpe'))
     conda:
         os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
     message:
-        "Converting bam file to a bed file."
+        "Converting bam file to a bed file and performing Tn5 shift."
     shell:
         """
-        bamToBed -i {input.bam} > {output.bed}
+        samtools view -b -f 2 -F 4 -F 8 -F 256 -F 512 -F 2048 {input.bam} |bamToBed -i stdin -bedpe | awk -F $'\t' 'BEGIN {OFS = FS}{ if ($9 == "+") {$2 = $2 + 4; $6 = $6 - 5} \
+	else if ($9 == "-") {$3 = $3 - 5; $5 = $5 + 4} print $0}' > {output.bedpe}
         """
-
+rule Convert_bedpe_macs:
+	input:
+		bedpe = rules.bam_to_bed_and_Tn5_shift.output.bedpe
+	output:
+		bedpe = protected(os.path.join(BAM_DIR, SAMPLE+'_macs_input.bedpe'))
+	params:
+		script = bedpe_SCRIPT
+	conda:
+		os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
+	message:
+        	"Converting bedpe to MACS2 compatible format."
+	shell:
+		"""
+		bash {params.script} {input.bedpe} > {output.bedpe}
+		"""
+	
+	
 rule peak_calling:
     input:
-        bed = rules.convert_bam_to_bed.output.bed
+        bed = rules.Convert_bedpe_macs.output.bed
     output:
         BroadPeak = protected(os.path.join(PEAK_DIR, SAMPLE+'_peaks.broadPeak'))
     params:
         dir = PEAK_DIR,
         sample = SAMPLE
-    threads: THREADS
     conda:
         os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
     message:
@@ -314,7 +325,6 @@ rule preprocess_peaks:
 		bed = protected(os.path.join(PEAK_DIR, SAMPLE+'_processed_peaks.bed'))
 	params:
 		BlackList = BLACK_LIST
-	threads: THREADS
 	conda:
 		os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
 	message:
