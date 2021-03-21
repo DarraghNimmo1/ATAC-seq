@@ -24,6 +24,8 @@ GENOME = config['genome']
 
 BLACK_LIST = config['black_list']
 
+MOTIFS = config['motifs']
+
 
 directory_function = functools.partial(os.path.join, config['results'])
 IN_BAM = directory_function('In_Bam')
@@ -31,6 +33,7 @@ OUT_BAM = directory_function('Out_Bam')
 PEAK_DIR  = directory_function('Peaks')
 ATAC_CORRECT = directory_function('ATAC_Correct')
 FOOT_PRINT_SCORE = directory_function('Foot_Print_Score')
+BIN_DETECT = directory_function('Bin_Detect')
 
 ###############################################################################################
 ###Rules
@@ -129,8 +132,26 @@ rule FootPrintScore:
 		"Calculating footprint score."
 	shell:
 		"""
-		TOBIAS FootprintScores --signal {input.signal} --regions {input.region} --output {output.bigwig} --cores 48 
+		TOBIAS ScoreBigwig --signal {input.signal} --regions {input.region} --output {output.bigwig} --cores 48 
+		"""	
+		
+rule BinDetect:
+	input:
+		signal = rules.FootPrintScore.output.bigwig,
+		region = rules.merge_peaks.output.peaks
+	output:
+		TF = expand(directory(os.path.join(BIN_DETECT, '/{cell_type}'), cell_type = CELL_TYPE))
+	params:
+		genome = GENOME
+		motifs = MOTIFS
+	message:
+		"Running bin detect on to make predictions on specific transcription factor binding at peaks"
+	shell:
 		"""
+		TOBIAS BINDetect --motifs {params.motifs} 
+		"""
+		
+		
 		
 		
 		
