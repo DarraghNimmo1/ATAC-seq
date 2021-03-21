@@ -41,6 +41,7 @@ BIN_DETECT = directory_function('Bin_Detect')
 
 rule all:
         input:
+		expand(directory(os.path.join(BIN_DETECT, '/{cell_type}'), cell_type = CELL_TYPE))
 
 
 rule Peak_calling:
@@ -144,12 +145,15 @@ rule BinDetect:
 	params:
 		genome = GENOME
 		motifs = MOTIFS
+		dir = expand(os.path.join(BIN_DETECT, '/{cell_type}'), cell_type = CELL_TYPE)
 	message:
 		"Running bin detect on to make predictions on specific transcription factor binding at peaks"
 	shell:
 		"""
-		TOBIAS BINDetect --motifs {params.motifs} 
+		TOBIAS BINDetect --motifs {params.motifs} --signals {input.signal} --genome {params.genome} --peaks {input.region} --outdir {params.dir} --cores 48
 		"""
+
+
 		
 		
 		
