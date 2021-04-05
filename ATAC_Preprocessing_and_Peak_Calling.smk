@@ -84,7 +84,7 @@ rule trim_adapters:
 conda:
         os.path.join(CONDA_ENV_DIR, 'ATACseq_Preprocessing_env.yaml')
     message:
-        "Trimming reads from the sequencing reads using trim galore."
+        "Trimming adapters from the sequencing reads using trim galore."
     shell:
         """
         trim_galore --paired {input} -o {params.dir}
