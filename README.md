@@ -1,6 +1,6 @@
 # ATAC-seq analysis
 
-A set of scripts to preprocess ATAC sequencing reads, align to genome, investigate for quality and perform downstream analysis including transcription factor footprinting and differential analysis.
+A set of scripts to preprocess ATAC sequencing reads, align to genome, investigate for quality and perform downstream analysis including transcription factor footprinting and differential accessibility analysis.
 
 (1) ATAC-seq preprocessing, alignment and peak calling.
 
